@@ -37,6 +37,8 @@ current_face = {0: []}
 current_image = ""
 current_image_size = []
 ratio = 1
+crop_x0 = 0
+crop_y0 = 0
 
 # For event handling
 current_part = 0
@@ -54,6 +56,18 @@ def smart_resize(img, new_size=512):
     img = cv2.resize(img, None, fx=ratio, fy=ratio)
     return img, ratio
 
+def smart_crop(img, x0, y0, x1, y1, border_mul=1.5):
+	# Compute the crop coords
+	h, w, _ = img.shape
+	face_w = x1-x0
+	face_h = y1-y0
+	crop_x0 = int(max(x0 - border_mul*face_w, 0))
+	crop_x1 = int(min(x1 + border_mul*face_w, w))
+	crop_y0 = int(max(y0 - border_mul*face_h, 0))
+	crop_y1 = int(min(y1 + border_mul*face_h, h))
+	# Crop the image
+	img = img[crop_y0:crop_y1,crop_x0:crop_x1]
+	return img, crop_x0, crop_y0
 
 def change_face_part(diff):
     global current_part, face_part_keys
@@ -256,7 +270,7 @@ def check_image_is_annotated(fname):
 
 def update_xml(split_name='training'):
     global xml_trees, current_face, current_annotations
-    global current_image, current_image_size, ratio
+    global current_image, current_image_size, ratio, crop_x0, crop_y0
 
     images_tag = xml_trees[split_name].getroot().find("./images")
 
@@ -278,8 +292,8 @@ def update_xml(split_name='training'):
                 for c in part_coords:
                     part_tag = ET.SubElement(box_tag, "part")
                     part_tag.set("name", str(part_count).zfill(2))
-                    part_tag.set("x", str(int(c[0]*ratio)))
-                    part_tag.set("y", str(int(c[1]*ratio)))
+                    part_tag.set("x", str(int(c[0]/ratio + crop_x0)))
+                    part_tag.set("y", str(int(c[1]/ratio + crop_y0)))
                     part_count += 1
 
 
@@ -354,9 +368,18 @@ if __name__ == "__main__":
         # This is useful when we split annotation into several runs
         if not check_image_is_annotated(f):
 
+            # Read info from file name
+            try:
+            	_, _, face_id, _, image_id, _, x0, _, y0, _, x1, _, y1, _ = f.split("_")
+            except Exception:
+            	continue
+            x0, y0, x1, y1 = int(x0), int(y0), int(x1), int(y1)
+
             # Load the image
             img = cv2.imread(os.path.join(args.img_path, f))
             current_image_size = list(img.shape[:2])
+            
+            img, crop_x0, crop_y0 = smart_crop(img, x0, y0, x1, y1)
             img, ratio = smart_resize(img, new_size=args.display_size)
             current_show_size = list(img.shape[:2])
             current_image = f
@@ -393,8 +416,6 @@ if __name__ == "__main__":
                     current_part_points_x = []
                     current_part_points_y = []
 
-                # TODO: Add a new option: no fitting and no polyline (nothing at all)
-                #   this would be useful for some parts like mouth or nostrils
                 if k == ord("m"):  # change annotation mode (drawing or clicking lines)
                     draw_mode = not draw_mode
                 if k == ord("f"):  # activate/deactivate curve fitting
